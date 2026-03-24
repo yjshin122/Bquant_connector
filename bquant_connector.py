@@ -52,6 +52,7 @@ OUTPUT_COLUMNS: list[str] = [spec[1] for spec in FIELD_SPECS]
 
 
 def get_universe(
+    service: bql.Service,
     tickers: Optional[Sequence[str]] = None,
     eqs_screen_name: Optional[str] = None,
 ) -> Any:
@@ -60,11 +61,12 @@ def get_universe(
 
     Parameters
     ----------
+    service:
+        An initialised ``bql.Service`` instance (universe helpers live here in BQuant).
     tickers:
         Full Bloomberg equity identifiers, e.g. ``['700 HK Equity', '9988 HK Equity']``.
     eqs_screen_name:
-        Name of a saved Equity Screening (EQS) screen, if your ``bql.univ`` API
-        exposes it (``EqsScreen`` / ``eqs`` / ``eqsscreen``).
+        Name of a saved Equity Screening (EQS) screen.
 
     Returns
     -------
@@ -80,13 +82,20 @@ def get_universe(
     if (tickers is not None) == (eqs_screen_name is not None):
         raise ValueError("Provide exactly one of tickers=... or eqs_screen_name=...")
 
+    # In BQuant the universe helpers are on the Service instance, not the module.
+    univ = getattr(service, "univ", None) or getattr(bql, "univ", None)
+    if univ is None:
+        raise RuntimeError(
+            "Cannot locate universe helpers on either bql.Service() or bql module. "
+            "Check your BQuant / bql version."
+        )
+
     if tickers is not None:
         cleaned = [t.strip() for t in tickers if str(t).strip()]
         if not cleaned:
             raise ValueError("tickers must be a non-empty sequence of strings")
-        return bql.univ.list(cleaned)
+        return univ.list(cleaned)
 
-    univ = bql.univ
     assert eqs_screen_name is not None
     name = eqs_screen_name.strip()
     for attr in ("EqsScreen", "eqsscreen", "eqs", "EQS"):
@@ -95,7 +104,7 @@ def get_universe(
             return ctor(name)
 
     raise RuntimeError(
-        "EQS universe is not available: no EqsScreen/eqs constructor on bql.univ. "
+        "EQS universe is not available: no EqsScreen/eqs constructor found. "
         "Use tickers=... or check your BQuant/bql version."
     )
 
@@ -317,7 +326,7 @@ def run_pipeline(
     End-to-end: universe → request → execute → flattened, typed DataFrame.
     """
     svc = service or bql.Service()
-    universe = get_universe(tickers=tickers, eqs_screen_name=eqs_screen_name)
+    universe = get_universe(svc, tickers=tickers, eqs_screen_name=eqs_screen_name)
     request = build_bql_request(svc, universe, field_specs=field_specs)
     response = fetch_bql_data(svc, request)
     raw = _response_to_dataframe(response)
